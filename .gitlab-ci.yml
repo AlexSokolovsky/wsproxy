@@ -1,0 +1,54 @@
+stages:
+  - test
+  - build
+  - deploy
+
+test:
+  image: ruby:2.4.1
+  stage: test
+  before_script:
+    - gem install bundler --no-ri --no-rdoc
+    - bundle install --jobs $(nproc)  --path /cache
+  script:
+    - bundle exec rubocop
+  cache:
+    untracked: true
+    key: "$CI_JOB_STAGE-$CI_COMMIT_REF_NAME"
+    paths:
+      - /cache
+
+build_image:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD $DOCKER_REGISTRY
+  script:
+    - docker build . -t $DOCKER_REGISTRY/wsproxy:$CI_COMMIT_SHA
+    - docker push $DOCKER_REGISTRY/wsproxy:$CI_COMMIT_SHA
+    - docker rmi $DOCKER_REGISTRY/wsproxy:$CI_COMMIT_SHA
+  only:
+    - master
+
+deploy:
+  image: alpine:latest
+  stage: deploy
+  when: on_success
+  variables:
+    IMAGE: $DOCKER_REGISTRY/wsproxy:$CI_COMMIT_SHA
+  before_script:
+    - apk update && apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 400 ~/.ssh/id_rsa
+    - ssh-add ~/.ssh/id_rsa
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+  script:
+    - ssh $HOST mkdir -p /home/cybergizer/deploy/wsproxy/
+    - scp docker-compose.yml $HOST:/home/cybergizer/deploy/wsproxy/
+    - ssh $HOST docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD $DOCKER_REGISTRY
+    - ssh $HOST 'export IMAGE_WS_PROXY='"'$IMAGE'"' && cd /home/cybergizer/deploy/wsproxy/ && docker-compose up -d && docker ps'
+  only:
+    - master

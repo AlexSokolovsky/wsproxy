@@ -1,0 +1,8 @@
+version: '2'
+services:
+  wsproxy:
+    image: $IMAGE_WS_PROXY
+    environment:
+      KAFKA_URL: localhost:9200
+    ports:
+      - 6000:3000
